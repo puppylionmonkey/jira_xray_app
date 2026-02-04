@@ -1,0 +1,1 @@
+python -m PyInstaller --noconfirm --onefile --windowed --add-data ".venv/Lib/site-packages/flet_desktop;flet_desktop" --collect-all flet --name "XrayExporter" main.py

@@ -2,3 +2,6 @@
 .idea
 packages
 config.ini
+XrayExporter.spec
+build
+dist
