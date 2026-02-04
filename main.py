@@ -136,7 +136,10 @@ async def main(page: ft.Page):
     selected_files_text = ft.Text("尚未選取檔案", color=ft.Colors.GREY_500)
     merge_checkbox = ft.Checkbox(label="合併為單一 CSV 檔案", value=True)
     log_text = ft.Text(size=13)
-    pb = ft.ProgressBar(width=600, visible=False, color=ft.Colors.BLUE_400)
+
+    # 這裡將原本的 ProgressBar 改為 ProgressRing (旋轉圓圈)
+    #
+    loading_ring = ft.ProgressRing(width=30, height=30, stroke_width=3, visible=False, color=ft.Colors.BLUE_400)
 
     # --- 核心修正：將檔案寫入下載資料夾 ---
     def write_to_csv(tests, filename, start_id_at):
@@ -166,45 +169,54 @@ async def main(page: ft.Page):
         return full_path
 
     def start_export(keys, is_merge):
-        clean_keys = [k for k in keys if k and k.strip()]
-        if not clean_keys:
-            log_text.value = "請輸入編號或匯入清單";
-            log_text.color = ft.Colors.RED_400;
-            page.update();
-            return
+        # 建立一個內部執行函式，負責跑耗時任務
+        def run_task():
+            clean_keys = [k for k in keys if k and k.strip()]
+            if not clean_keys:
+                log_text.value = "請輸入編號或匯入清單"
+                log_text.color = ft.Colors.RED_400
+                loading_ring.visible = False
+                page.update()
+                return
 
-        pb.visible = True
-        log_text.value = "連線中...";
+            token = get_xray_token()
+            if not token:
+                log_text.value = "認證失敗：請檢查 config.ini"
+                log_text.color = ft.Colors.RED_400
+                loading_ring.visible = False
+                page.update()
+                return
+
+            results = fetch_xray_data(token, clean_keys)
+            if not results:
+                log_text.value = "找不到資料：請檢查 Key 是否正確"
+                log_text.color = ft.Colors.ORANGE_400
+                loading_ring.visible = False
+                page.update()
+                return
+
+            if is_merge:
+                filename = f"Merged_{clean_keys[0]}.csv"
+                write_to_csv(results, filename, 1)
+                log_text.value = f"✅ 已存至\"下載\"資料夾: {filename}"
+            else:
+                for i, test in enumerate(results, 1):
+                    write_to_csv([test], f"{test['jira']['key']}.csv", i)
+                log_text.value = f"✅ 已產出 {len(results)} 個檔案至\"下載\"資料夾"
+
+            log_text.color = ft.Colors.GREEN_400
+            loading_ring.visible = False
+            page.update()
+
+        # 1. 先更新 UI 狀態（顯示轉圈圈）
+        loading_ring.visible = True
+        log_text.value = "匯出中..."
+        log_text.color = ft.Colors.BLUE_400
         page.update()
 
-        token = get_xray_token()
-        if not token:
-            log_text.value = "認證失敗：請檢查 config.ini";
-            log_text.color = ft.Colors.RED_400;
-            pb.visible = False;
-            page.update();
-            return
-
-        results = fetch_xray_data(token, clean_keys)
-        if not results:
-            log_text.value = "找不到資料：請檢查 Key 是否正確";
-            log_text.color = ft.Colors.ORANGE_400;
-            pb.visible = False;
-            page.update();
-            return
-
-        if is_merge:
-            filename = f"Merged_{clean_keys[0]}.csv"
-            saved_path = write_to_csv(results, filename, 1)
-            log_text.value = f"✅ 已存至下載區: {filename}"
-        else:
-            for i, test in enumerate(results, 1):
-                saved_path = write_to_csv([test], f"{test['jira']['key']}.csv", i)
-            log_text.value = f"✅ 已產出 {len(results)} 個檔案至下載區"
-
-        log_text.color = ft.Colors.GREEN_400;
-        pb.visible = False;
-        page.update()
+        # 2. 使用執行緒去跑耗時任務，不卡住 UI
+        import threading
+        threading.Thread(target=run_task, daemon=True).start()
 
     def pick_file_sync():
         root = tk.Tk();
@@ -235,7 +247,7 @@ async def main(page: ft.Page):
     page.add(
         ft.Row([ft.Icon(ft.Icons.CLOUD_SYNC, color=ft.Colors.BLUE_400), ft.Text("Xray CSV Exporter", size=24, weight="bold")]),
         ft.Divider(),
-        ft.Text("匯出單一Test", weight="bold"),
+        ft.Text("匯出單個Test", weight="bold"),
         ft.Row([single_key_input, ft.Button("匯出", on_click=lambda _: start_export([single_key_input.value], False))]),
         ft.Container(height=20),
         ft.Text("匯出多個Test", weight="bold"),
@@ -245,7 +257,8 @@ async def main(page: ft.Page):
         ]),
         ft.Row([merge_checkbox, ft.Button("匯出", on_click=lambda _: start_export(import_keys, merge_checkbox.value))]),
         ft.Divider(),
-        pb,
+        # 這裡改放旋轉圖示
+        ft.Row([loading_ring], alignment=ft.MainAxisAlignment.CENTER),
         log_text
     )
 
