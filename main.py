@@ -131,22 +131,31 @@ async def main(page: ft.Page):
         page.update()
         return
 
+    # 1. 變數初始化
     import_keys = []
+
+    # 2. 定義 UI 元件（先定義基礎元件，不帶 on_click 的）
     single_key_input = ft.TextField(label="輸入單個 PBPM 編號", hint_text="例如: PBPM-25818", expand=True)
     selected_files_text = ft.Text("尚未選取檔案", color=ft.Colors.GREY_500)
     merge_checkbox = ft.Checkbox(label="合併為單一 CSV 檔案", value=True)
     log_text = ft.Text(size=13)
-
-    # 這裡將原本的 ProgressBar 改為 ProgressRing (旋轉圓圈)
-    #
     loading_ring = ft.ProgressRing(width=30, height=30, stroke_width=3, visible=False, color=ft.Colors.BLUE_400)
 
-    # --- 核心修正：將檔案寫入下載資料夾 ---
+    # 3. 定義狀態控制函式
+    def set_ui_state(disabled: bool):
+        """統一控制 UI 啟用狀態與轉圈圈顯示"""
+        export_btn_single.disabled = disabled
+        export_btn_batch.disabled = disabled
+        pick_file_btn.disabled = disabled
+        single_key_input.disabled = disabled
+        merge_checkbox.disabled = disabled
+        loading_ring.visible = disabled
+        page.update()
+
+    # 4. 定義 CSV 寫入函式
     def write_to_csv(tests, filename, start_id_at):
         download_folder = get_download_path()
-        # 組合完整的儲存路徑 (下載資料夾 + 檔名)
         full_path = os.path.join(download_folder, filename)
-
         with open(full_path, mode='w', newline='', encoding='utf-8-sig') as file:
             writer = csv.writer(file)
             writer.writerow(['Test Repo', 'Issue Id', 'Issue key', 'Test type', 'Test Summary', 'Test Priority', 'Action', 'Data', 'Result', 'Links', 'Description', 'Unstructured definition'])
@@ -168,100 +177,96 @@ async def main(page: ft.Page):
                             writer.writerow(["", current_id, "", t_type, "", "", step.get('action', ''), step.get('data', ''), step.get('result', ''), "", "", ""])
         return full_path
 
+    # 5. 定義匯出任務執行函式
     def start_export(keys, is_merge):
-        # 建立一個內部執行函式，負責跑耗時任務
         def run_task():
-            clean_keys = [k for k in keys if k and k.strip()]
-            if not clean_keys:
-                log_text.value = "請輸入編號或匯入清單"
+            try:
+                clean_keys = [k for k in keys if k and k.strip()]
+                if not clean_keys:
+                    log_text.value = "請輸入編號或匯入清單"
+                    log_text.color = ft.Colors.RED_400
+                else:
+                    token = get_xray_token()
+                    if not token:
+                        log_text.value = "認證失敗：請檢查 config.ini"
+                        log_text.color = ft.Colors.RED_400
+                    else:
+                        results = fetch_xray_data(token, clean_keys)
+                        if not results:
+                            log_text.value = "找不到資料：請檢查 Key 是否正確"
+                            log_text.color = ft.Colors.ORANGE_400
+                        else:
+                            if is_merge:
+                                filename = f"Merged_{clean_keys[0]}.csv"
+                                write_to_csv(results, filename, 1)
+                                log_text.value = f'✅ 已存至"下載"資料夾: {filename}'
+                            else:
+                                for i, test in enumerate(results, 1):
+                                    write_to_csv([test], f"{test['jira']['key']}.csv", i)
+                                log_text.value = f'✅ 已產出 {len(results)} 個檔案至"下載"資料夾'
+                            log_text.color = ft.Colors.GREEN_400
+            except Exception as e:
+                log_text.value = f"錯誤: {str(e)}"
                 log_text.color = ft.Colors.RED_400
-                loading_ring.visible = False
-                page.update()
-                return
 
-            token = get_xray_token()
-            if not token:
-                log_text.value = "認證失敗：請檢查 config.ini"
-                log_text.color = ft.Colors.RED_400
-                loading_ring.visible = False
-                page.update()
-                return
+            set_ui_state(False)
 
-            results = fetch_xray_data(token, clean_keys)
-            if not results:
-                log_text.value = "找不到資料：請檢查 Key 是否正確"
-                log_text.color = ft.Colors.ORANGE_400
-                loading_ring.visible = False
-                page.update()
-                return
-
-            if is_merge:
-                filename = f"Merged_{clean_keys[0]}.csv"
-                write_to_csv(results, filename, 1)
-                log_text.value = f"✅ 已存至\"下載\"資料夾: {filename}"
-            else:
-                for i, test in enumerate(results, 1):
-                    write_to_csv([test], f"{test['jira']['key']}.csv", i)
-                log_text.value = f"✅ 已產出 {len(results)} 個檔案至\"下載\"資料夾"
-
-            log_text.color = ft.Colors.GREEN_400
-            loading_ring.visible = False
-            page.update()
-
-        # 1. 先更新 UI 狀態（顯示轉圈圈）
-        loading_ring.visible = True
         log_text.value = "匯出中..."
         log_text.color = ft.Colors.BLUE_400
-        page.update()
-
-        # 2. 使用執行緒去跑耗時任務，不卡住 UI
+        set_ui_state(True)
         import threading
         threading.Thread(target=run_task, daemon=True).start()
 
-    def pick_file_sync():
-        root = tk.Tk();
-        root.withdraw();
-        root.attributes('-topmost', True)
-        file_path = filedialog.askopenfilename(title="選擇包含 Issue ID 的 CSV 檔案", filetypes=[("CSV Files", "*.csv")])
-        root.destroy()
-        return file_path
-
+    # 6. 定義檔案選取函式 (必須在被引用前定義)
     async def pick_file_click(e):
-        nonlocal import_keys
+        def pick_sync():
+            root = tk.Tk();
+            root.withdraw();
+            root.attributes('-topmost', True)
+            res = filedialog.askopenfilename(title="選擇 CSV", filetypes=[("CSV Files", "*.csv")])
+            root.destroy();
+            return res
+
         loop = asyncio.get_event_loop()
-        file_path = await loop.run_in_executor(None, pick_file_sync)
+        file_path = await loop.run_in_executor(None, pick_sync)
         if file_path:
-            import_keys = []
+            import_keys.clear()
             try:
                 with open(file_path, newline='', encoding='utf-8-sig') as f:
                     reader = csv.reader(f)
                     for row in reader:
                         if row: import_keys.append(row[0].strip())
-                selected_files_text.value = f"已讀取: {len(import_keys)} 筆";
+                selected_files_text.value = f"已讀取: {len(import_keys)} 筆"
                 selected_files_text.color = ft.Colors.GREEN_400
             except:
-                selected_files_text.value = "讀取失敗";
+                selected_files_text.value = "讀取失敗"
                 selected_files_text.color = ft.Colors.RED_400
             page.update()
 
+    # 7. 定義按鈕元件 (此時 pick_file_click 和 start_export 均已存在)
+    export_btn_single = ft.Button("匯出", on_click=lambda _: start_export([single_key_input.value], False))
+    export_btn_batch = ft.Button("匯出", on_click=lambda _: start_export(import_keys, merge_checkbox.value))
+    pick_file_btn = ft.Button("選取 CSV", icon=ft.Icons.UPLOAD_FILE, on_click=pick_file_click)
+
+    # 8. 組合畫面佈局
     page.add(
         ft.Row([ft.Icon(ft.Icons.CLOUD_SYNC, color=ft.Colors.BLUE_400), ft.Text("Xray CSV Exporter", size=24, weight="bold")]),
         ft.Divider(),
         ft.Text("匯出單個Test", weight="bold"),
-        ft.Row([single_key_input, ft.Button("匯出", on_click=lambda _: start_export([single_key_input.value], False))]),
+        ft.Row([single_key_input, export_btn_single]),
         ft.Container(height=20),
         ft.Text("匯出多個Test", weight="bold"),
-        ft.Row([
-            ft.Button("選取 CSV", icon=ft.Icons.UPLOAD_FILE, on_click=pick_file_click),
-            selected_files_text
-        ]),
-        ft.Row([merge_checkbox, ft.Button("匯出", on_click=lambda _: start_export(import_keys, merge_checkbox.value))]),
+        ft.Row([pick_file_btn, selected_files_text]),
+        ft.Row([merge_checkbox, export_btn_batch]),
         ft.Divider(),
-        # 這裡改放旋轉圖示
         ft.Row([loading_ring], alignment=ft.MainAxisAlignment.CENTER),
         log_text
     )
 
+
+
+if __name__ == "__main__":
+    ft.run(main)
 
 if __name__ == "__main__":
     ft.run(main)
