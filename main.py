@@ -65,13 +65,58 @@ def fetch_jira_links(key):
 
 def fetch_xray_data(token, keys):
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    all_results = []
+    limit = 100
+    start = 0
+
+    # 先組裝好 JQL
     formatted_keys = ", ".join([f'"{k}"' for k in keys])
-    query = {
-        "query": "query($jql:String){getTests(jql:$jql,limit:100){results{jira(fields:[\"key\",\"summary\",\"priority\"]) testType{name} folder{path} steps{action data result}}}}",
-        "variables": {"jql": f"key IN ({formatted_keys})"}
-    }
-    res = requests.post(f"{BASE_URL}/graphql", headers=headers, json=query)
-    return res.json().get('data', {}).get('getTests', {}).get('results', [])
+    jql_query = f"key IN ({formatted_keys})"
+
+    while True:
+        query = {
+            # 這裡的 Int 改成 Int!，表示強制要求數值
+            "query": """
+                query($jql:String, $start:Int!, $limit:Int!){
+                    getTests(jql:$jql, start:$start, limit:$limit){
+                        results{
+                            jira(fields:["key","summary","priority"])
+                            testType{name}
+                            folder{path}
+                            steps{action data result}
+                        }
+                    }
+                }
+            """,
+            "variables": {
+                "jql": jql_query,
+                "start": start,
+                "limit": limit
+            }
+        }
+        try:
+            res = requests.post(f"{BASE_URL}/graphql", headers=headers, json=query, timeout=20)
+            res_json = res.json()
+
+            if "errors" in res_json:
+                print(f"GraphQL 錯誤內容: {res_json['errors']}")
+                break
+
+            data = res_json.get('data', {}).get('getTests', {}).get('results', [])
+            if not data:
+                break
+
+            all_results.extend(data)
+
+            # 如果抓回來的數量小於要求數量，代表沒有下一頁了
+            if len(data) < limit:
+                break
+
+            start += limit
+        except Exception as e:
+            print(f"連線異常: {e}")
+            break
+    return all_results
 
 
 # --- Flet UI 主程式 ---
