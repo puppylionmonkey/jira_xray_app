@@ -7,6 +7,8 @@ import configparser
 import os
 from pathlib import Path  # 新增：用於偵測系統路徑
 from tkinter import filedialog
+
+from flet import FontWeight
 from requests.auth import HTTPBasicAuth
 
 # --- 設定檔自動化讀取邏輯 ---
@@ -57,7 +59,7 @@ def fetch_jira_links(key):
         if res.status_code == 200:
             links = res.json().get('fields', {}).get('issuelinks', [])
             keys = [(l.get('outwardIssue') or l.get('inwardIssue'))['key'] for l in links if (l.get('outwardIssue') or l.get('inwardIssue'))]
-            return ";".join(keys)
+            return "".join(keys)
     except:
         pass
     return ""
@@ -220,11 +222,11 @@ async def main(page: ft.Page):
     # 6. 定義檔案選取函式 (必須在被引用前定義)
     async def pick_file_click(e):
         def pick_sync():
-            root = tk.Tk();
-            root.withdraw();
+            root = tk.Tk()
+            root.withdraw()
             root.attributes('-topmost', True)
             res = filedialog.askopenfilename(title="選擇 CSV", filetypes=[("CSV Files", "*.csv")])
-            root.destroy();
+            root.destroy()
             return res
 
         loop = asyncio.get_event_loop()
@@ -250,12 +252,12 @@ async def main(page: ft.Page):
 
     # 8. 組合畫面佈局
     page.add(
-        ft.Row([ft.Icon(ft.Icons.CLOUD_SYNC, color=ft.Colors.BLUE_400), ft.Text("Xray CSV Exporter", size=24, weight="bold")]),
+        ft.Row([ft.Icon(ft.Icons.CLOUD_SYNC, color=ft.Colors.BLUE_400), ft.Text("Xray CSV Exporter", size=24, weight=FontWeight.BOLD)]),
         ft.Divider(),
-        ft.Text("匯出單個Test", weight="bold"),
+        ft.Text("匯出單個Test", weight=FontWeight.BOLD),
         ft.Row([single_key_input, export_btn_single]),
         ft.Container(height=20),
-        ft.Text("匯出多個Test", weight="bold"),
+        ft.Text("匯出多個Test", weight=FontWeight.BOLD),
         ft.Row([pick_file_btn, selected_files_text]),
         ft.Row([merge_checkbox, export_btn_batch]),
         ft.Divider(),
